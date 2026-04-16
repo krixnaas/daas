@@ -1,11 +1,29 @@
-@import 'tailwindcss';
+@import "tailwindcss";
+@import "../../vendor/livewire/flux/dist/flux.css";
 
-@source '../../vendor/laravel/framework/src/Illuminate/Pagination/resources/views/*.blade.php';
-@source '../../storage/framework/views/*.php';
-@source '../**/*.blade.php';
-@source '../**/*.js';
+/* 1. Import Premium App Font */
+@import url('https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&display=swap');
 
 @theme {
-    --font-sans: 'Instrument Sans', ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji',
-        'Segoe UI Symbol', 'Noto Color Emoji';
+    /* 2. Tell Tailwind/Flux to use Inter as the primary font */
+    --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+
+    /* 3. Define a custom "Bolt" header weight */
+    --font-black: 900;
+}
+
+@layer base {
+    body {
+        @apply font-sans antialiased text-slate-900 dark:text-white bg-white dark:bg-zinc-950;
+        /* Force tabular numbers for counters/timers in the app */
+        font-variant-numeric: tabular-nums;
+    }
+}
+
+@layer components {
+
+    /* Custom Utility for your "Bolt" Headers */
+    .heading-premium {
+        @apply font-black italic uppercase tracking-tighter leading-none;
+    }
 }

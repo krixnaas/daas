@@ -1,0 +1,34 @@
+<?php
+
+namespace App\Models;
+
+use Illuminate\Database\Eloquent\Model;
+
+class Child extends Model
+{
+    /**
+     * The attributes that are mass assignable.
+     *
+     * @var array<int, string>
+     */
+    protected $fillable = [
+        'name',
+        'date_of_birth',
+        'due_date',
+        'gender',
+        'status',
+        'weight',
+        'height',
+        'head_circumference',
+        'blood_group',
+        'umbilical_cord_fell_off_at',
+    ];
+
+    /**
+     * Relationship back to the profile.
+     */
+    public function dadProfile()
+    {
+        return $this->belongsTo(DadProfile::class);
+    }
+}
