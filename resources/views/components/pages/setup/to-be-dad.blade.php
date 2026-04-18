@@ -11,7 +11,7 @@ new #[Layout('layouts.app')] class extends Component {
     
     // Default with one child input visible
     public $arrivals = [
-        ['name' => '', 'due_date' => '', 'gender' => 'unknown']
+        ['name' => '', 'due_date' => '', 'gender' => 'unknown', 'expected_weight' => '']
     ];
 
     public $trackMom = null;
@@ -19,7 +19,7 @@ new #[Layout('layouts.app')] class extends Component {
 
     public function addArrival()
     {
-        $this->arrivals[] = ['name' => '', 'due_date' => '', 'gender' => 'unknown'];
+        $this->arrivals[] = ['name' => '', 'due_date' => '', 'gender' => 'unknown', 'expected_weight' => ''];
         if (class_exists(Haptic::class)) Haptic::impact('light');
     }
 
@@ -72,13 +72,9 @@ new #[Layout('layouts.app')] class extends Component {
 
         $tabs = [];
 
-        if ($this->trackMom) {
-            $tabs[] = [
-                'id' => 'mom', 
-                'label' => $this->momName ?: 'Mom', 
-                'type' => 'mom'
-            ];
-        }
+        // During pregnancy, we merge mom and baby into a single protocol tab. 
+        // The Mom tab is only activated separately after the "Baby is Here" trigger.
+        // We will store her preference in track_mom to enable this later.
 
         // Use $this->arrivals here, and $index + 1 for the default name
         foreach ($this->arrivals as $index => $arrival) {
@@ -86,6 +82,7 @@ new #[Layout('layouts.app')] class extends Component {
                 'name' => $arrival['name'] ?: 'Baby ' . ($index + 1),
                 'due_date' => $arrival['due_date'],
                 'gender' => $arrival['gender'],
+                'expected_weight' => $arrival['expected_weight'] ?? null,
                 'status' => 'expecting'
             ]);
 
@@ -124,7 +121,7 @@ new #[Layout('layouts.app')] class extends Component {
         @if($currentStep === 1)
             <div x-transition class="space-y-8">
                 <div class="space-y-1">
-                    <h2 class="heading-premium text-5xl text-slate-900 dark:text-white leading-none">The Arrival</h2>
+                    <h2 class="heading-premium text-3xl text-slate-900 dark:text-white leading-none">The Arrival</h2>
                     <p class="text-blue-600 font-black text-[10px] uppercase tracking-[0.3em]">Incoming Profiles</p>
                 </div>
 
@@ -140,6 +137,7 @@ new #[Layout('layouts.app')] class extends Component {
                             <div class="space-y-5">
                                 <flux:input wire:model="arrivals.{{ $index }}.name" placeholder="Nickname (e.g. Peanut)" size="xl" class="rounded-2xl border-none shadow-sm bg-white dark:bg-zinc-800" />
                                 <flux:input wire:model="arrivals.{{ $index }}.due_date" type="date" label="Estimated Due Date" size="xl" class="rounded-2xl border-none shadow-sm bg-white dark:bg-zinc-800" />
+                                <flux:input wire:model="arrivals.{{ $index }}.expected_weight" type="number" step="0.1" label="Expected Weight (kg)" size="xl" class="rounded-2xl border-none shadow-sm bg-white dark:bg-zinc-800" />
                                 
                                 <div class="grid grid-cols-3 gap-2">
                                     @foreach(['boy', 'girl', 'unknown'] as $g)
@@ -169,7 +167,7 @@ new #[Layout('layouts.app')] class extends Component {
                     <x-lucide-heart-pulse class="w-8 h-8 text-white" />
                 </div>
                 <div class="space-y-2">
-                    <h2 class="heading-premium text-5xl text-slate-900 dark:text-white leading-none">Partner Support</h2>
+                    <h2 class="heading-premium text-3xl text-slate-900 dark:text-white leading-none">Partner Support</h2>
                     <p class="text-rose-600 font-black text-[10px] uppercase tracking-[0.3em]">Maternal Health</p>
                 </div>
 

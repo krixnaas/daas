@@ -22,6 +22,9 @@ class Child extends Model
         'head_circumference',
         'blood_group',
         'umbilical_cord_fell_off_at',
+        'expected_weight',
+        'birth_type',
+        'labor_started_at',
     ];
 
     /**

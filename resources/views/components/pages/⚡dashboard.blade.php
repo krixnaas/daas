@@ -9,23 +9,14 @@ use Native\Mobile\Facades\Haptic;
 new #[Layout('layouts.app')] class extends Component {
     public $activeTabId = null;
     public $showSettings = false;
-    
-    // Logging Properties (Mixed from your RN logic)
-    public $feedType = 'breast_left';
-    public $breastScale = 4;
-    public $feedAmount = '';
-    public $nappyType = 'dirty'; // dirty or wet
-    public $nappyAmount = 'medium'; // mapped to ++
-    public $sleepStart;
-    public $weight, $height, $head;
+    public $tabConfigs = []; // For editing
 
     public function mount()
     {
-        $tabs = $this->getSafeTabs();
-        if (!$this->activeTabId && count($tabs) > 0) {
-            $this->activeTabId = $tabs[0]['id'];
+        $this->tabConfigs = $this->getSafeTabs();
+        if (!$this->activeTabId && count($this->tabConfigs) > 0) {
+            $this->activeTabId = $this->tabConfigs[0]['id'];
         }
-        $this->sleepStart = now()->format('Y-m-d H:i');
     }
 
     public function getSafeTabs(): array
@@ -40,39 +31,22 @@ new #[Layout('layouts.app')] class extends Component {
         if (class_exists(Haptic::class)) Haptic::impact('light');
     }
 
-    // --- Save Methods ---
-
-    public function saveFeed()
+    public function saveTabSettings()
     {
-        $this->logActivity('feed', [
-            'method' => $this->feedType,
-            'scale' => str_contains($this->feedType, 'breast') ? $this->breastScale : null,
-            'amount' => !str_contains($this->feedType, 'breast') ? $this->feedAmount : null,
-        ]);
-        $this->dispatch('modal-close');
-    }
-
-    public function saveNappy()
-    {
-        $this->logActivity('nappy', [
-            'type' => $this->nappyType,
-            'level' => $this->nappyAmount,
-        ]);
-        $this->dispatch('modal-close');
-    }
-
-    private function logActivity($type, $meta)
-    {
-        $childId = str_replace('child_', '', $this->activeTabId);
         $profile = auth()->user()->dadProfile;
-        
-        $profile->children()->find($childId)->activityLogs()->create([
-            'type' => $type,
-            'meta' => $meta,
-            'recorded_at' => now(),
-        ]);
-
+        $profile->update(['tab_config' => $this->tabConfigs]);
+        $this->showSettings = false;
         if (class_exists(Haptic::class)) Haptic::success();
+    }
+
+    public function moveTab($index, $direction)
+    {
+        $newIndex = $direction === 'up' ? $index - 1 : $index + 1;
+        if (isset($this->tabConfigs[$newIndex])) {
+            $temp = $this->tabConfigs[$index];
+            $this->tabConfigs[$index] = $this->tabConfigs[$newIndex];
+            $this->tabConfigs[$newIndex] = $temp;
+        }
     }
 }; ?>
 
@@ -83,8 +57,8 @@ new #[Layout('layouts.app')] class extends Component {
             <h1 class="text-2xl font-black italic tracking-tighter text-slate-900 dark:text-white uppercase">DAAS</h1>
             <p class="text-[10px] font-black uppercase tracking-[0.2em] text-indigo-600">Command Center</p>
         </div>
-        <button wire:click="$set('showSettings', true)" class="w-10 h-10 rounded-xl bg-slate-50 dark:bg-zinc-800 flex items-center justify-center text-slate-500">
-            <x-lucide-settings-2 class="w-5 h-5" />
+        <button onclick="Flux.modal('tactical-settings').show()" class="w-10 h-10 rounded-xl bg-slate-50 dark:bg-zinc-800 flex items-center justify-center text-slate-500">
+            <x-lucide-layout-grid class="w-5 h-5" />
         </button>
     </nav>
 
@@ -107,12 +81,16 @@ new #[Layout('layouts.app')] class extends Component {
             @php $currentTab = collect($safeTabs)->firstWhere('id', $activeTabId) ?? $safeTabs[0]; @endphp
 
             @if($currentTab['type'] === 'mom')
-                
-            <livewire:mom-view 
-                :profile-id="auth()->user()->dadProfile->id" 
-                :mom-name="$currentTab['label']" 
-                :key="'mom-view-'.$currentTab['id']"
-            />
+                <livewire:mom-view 
+                    :profile-id="auth()->user()->dadProfile->id" 
+                    :mom-name="$currentTab['label']" 
+                    :key="'mom-view-'.$currentTab['id']"
+                />
+            @elseif($currentTab['type'] === 'expectant')
+                <livewire:pregnancy-view 
+                    :child-id="str_replace('child_', '', $activeTabId)" 
+                    :key="'pregnancy-view-'.$currentTab['id']"
+                />
             @else
                 <livewire:kid-view 
                     :kid-id="str_replace('child_', '', $activeTabId)" 
@@ -123,5 +101,33 @@ new #[Layout('layouts.app')] class extends Component {
         </div>
     </main>
 
+    <!-- Tactical Settings Modal -->
+    <flux:modal name="tactical-settings" variant="flyout" side="bottom" class="!rounded-t-[2.5rem] !p-8 space-y-6">
+        <div class="sheet-handle"></div>
+        <div class="text-center">
+            <h2 class="text-xl font-black uppercase italic tracking-tighter text-indigo-600">HQ Settings</h2>
+            <p class="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 mt-1">Manage Sector Deployment</p>
+        </div>
 
+        <div class="space-y-4">
+            @foreach($tabConfigs as $index => $tab)
+                <div class="bg-slate-50 p-4 rounded-2xl flex items-center gap-4 group">
+                    <div class="flex flex-col gap-1">
+                        <button wire:click="moveTab({{ $index }}, 'up')" @disabled($index === 0) class="text-slate-300 hover:text-indigo-600 disabled:opacity-30"><x-lucide-chevron-up class="w-4 h-4" /></button>
+                        <button wire:click="moveTab({{ $index }}, 'down')" @disabled($index === count($tabConfigs) - 1) class="text-slate-300 hover:text-indigo-600 disabled:opacity-30"><x-lucide-chevron-down class="w-4 h-4" /></button>
+                    </div>
+                    <div class="flex-1">
+                        <label class="text-[8px] font-black uppercase text-slate-400">Sector Name</label>
+                        <input type="text" wire:model="tabConfigs.{{ $index }}.label" class="w-full bg-transparent border-none p-0 text-sm font-black uppercase italic text-slate-900 focus:ring-0" />
+                    </div>
+                    <div class="text-xl">{{ $tab['type'] === 'mom' ? '👩' : '👶' }}</div>
+                </div>
+            @endforeach
+        </div>
+
+        <div class="pt-4 space-y-3">
+            <flux:button wire:click="saveTabSettings" @click="Flux.modal('tactical-settings').hide()" class="w-full h-16 bg-slate-800 text-white font-black uppercase italic !rounded-2xl">Sync Deployment</flux:button>
+            <flux:button @click="Flux.modal('tactical-settings').hide()" variant="ghost" class="w-full">Cancel</flux:button>
+        </div>
+    </flux:modal>
 </div>

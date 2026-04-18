@@ -26,6 +26,7 @@ new #[Layout('layouts.guest')] class extends Component
         $validated['password'] = Hash::make($validated['password']);
 
         $user = User::create($validated);
+        event(new \Illuminate\Auth\Events\Registered($user));
 
         Auth::login($user);
 

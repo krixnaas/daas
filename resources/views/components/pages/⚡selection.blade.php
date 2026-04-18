@@ -31,7 +31,7 @@ new #[Layout('layouts.app')] class extends Component {
             <flux:icon.heart variant="solid" class="text-rose-500 w-6 h-6 mt-4" />
         </div>
         
-        <h1 class="text-5xl font-extrabold tracking-tighter text-slate-900 dark:text-white">DAAS</h1>
+        <h1 class="text-3xl font-extrabold tracking-tighter text-slate-900 dark:text-white">DAAS</h1>
         <p class="text-blue-600 font-bold tracking-[0.2em] uppercase text-sm">Dad As A Service</p>
         <p class="text-slate-500 dark:text-zinc-400 text-base max-w-xs mx-auto">
             The essential companion for every dad

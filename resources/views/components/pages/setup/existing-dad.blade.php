@@ -68,10 +68,17 @@ new #[Layout('layouts.app')] class extends Component {
     public function save()
     {
         DB::transaction(function () {
-            // 1. Build dynamic tab configuration based on setup
+            // 1. Create the Dad Profile first
+            $profile = auth()->user()->dadProfile()->create([
+                'type' => 'existing',
+                'track_mom' => $this->trackMom ?? false,
+                'partner_name' => $this->momName,
+                'tab_config' => [], // Temporary empty
+            ]);
+
+            // 2. Create the Children and gather their IDs
             $tabs = [];
             
-            // Add Partner/Mom Tab if enabled
             if ($this->trackMom) {
                 $tabs[] = [
                     'id' => 'mom',
@@ -80,33 +87,23 @@ new #[Layout('layouts.app')] class extends Component {
                 ];
             }
 
-            // Add a tab for each child
-            foreach ($this->children as $index => $childData) {
-                // We'll create the profile first to get child IDs, 
-                // but for the initial save, we can use temporary IDs or child names.
+            foreach ($this->children as $childData) {
+                $child = $profile->children()->create([
+                    'name' => $childData['name'],
+                    'date_of_birth' => $childData['dob'],
+                    'gender' => $childData['gender'],
+                    'status' => 'born'
+                ]);
+
                 $tabs[] = [
-                    'id' => 'child_' . $index, // Temporary ID, will be mapped to child ID
-                    'label' => $childData['name'],
+                    'id' => 'child_' . $child->id,
+                    'label' => $child->name,
                     'type' => 'kid'
                 ];
             }
 
-            // 2. Create the Dad Profile
-            $profile = auth()->user()->dadProfile()->create([
-                'type' => 'existing',
-                'track_mom' => $this->trackMom ?? false,
-                'partner_name' => $this->momName, // Saving the partner name
-                'tab_config' => $tabs,
-            ]);
-
-            // 3. Create the Children
-            foreach ($this->children as $child) {
-                $profile->children()->create([
-                    'name' => $child['name'],
-                    'date_of_birth' => $child['dob'],
-                    'gender' => $child['gender'],
-                ]);
-            }
+            // 3. Update the Dad Profile with real tab config
+            $profile->update(['tab_config' => $tabs]);
         });
 
         if (class_exists(Haptic::class)) Haptic::success();
@@ -134,7 +131,7 @@ new #[Layout('layouts.app')] class extends Component {
         @if($currentStep === 1)
             <div x-transition class="space-y-8">
                 <div class="space-y-1">
-                    <h2 class="heading-premium text-5xl text-slate-900 dark:text-white leading-none">The Squad</h2>
+                    <h2 class="heading-premium text-3xl text-slate-900 dark:text-white leading-none">The Squad</h2>
                     <p class="text-indigo-600 font-black text-[10px] uppercase tracking-[0.3em]">Active Profiles</p>
                 </div>
 
@@ -176,7 +173,7 @@ new #[Layout('layouts.app')] class extends Component {
                     <x-lucide-heart-pulse class="w-8 h-8 text-white" />
                 </div>
                 <div class="space-y-2">
-                    <h2 class="heading-premium text-5xl text-slate-900 dark:text-white leading-none">Partner Support</h2>
+                    <h2 class="heading-premium text-3xl text-slate-900 dark:text-white leading-none">Partner Support</h2>
                     <p class="text-rose-600 font-black text-[10px] uppercase tracking-[0.3em]">Recovery & Care</p>
                 </div>
 

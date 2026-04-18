@@ -11,7 +11,21 @@ Route::middleware('guest')->group(function () {
     Route::livewire('/register', 'pages.auth.register')->name('register');
 });
 
-// 2. Protected App Routes
+Route::middleware('auth')->group(function () {
+    Route::livewire('/verify-email', 'pages.auth.verify-email')->name('verification.notice');
+
+    Route::get('/verify-email/{id}/{hash}', function (\Illuminate\Foundation\Auth\EmailVerificationRequest $request) {
+        $request->fulfill();
+        return redirect()->route('selection');
+    })->middleware('signed')->name('verification.verify');
+
+    Route::post('/email/verification-notification', function (\Illuminate\Http\Request $request) {
+        $request->user()->sendEmailVerificationNotification();
+        return back()->with('status', 'verification-link-sent');
+    })->middleware('throttle:6,1')->name('verification.send');
+});
+
+// 2. Verified Tactical Sectors
 Route::middleware(['auth', 'verified'])->group(function () {
     
 
