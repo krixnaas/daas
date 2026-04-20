@@ -43,6 +43,12 @@ class KidView extends Component
     public $perPage = 10;
     public $appointmentTitle = '', $appointmentTime = null, $appointmentNotes = '';
 
+    // Form States - Reminder
+    public $reminderLabel = 'Medical';
+    public $reminderCustomLabel = '';
+    public $reminderTime;
+    public $reminderNotes = '';
+
     public function mount($kidId, $kidName = 'Kiddo')
     {
         $this->kidId = $kidId;
@@ -50,6 +56,19 @@ class KidView extends Component
         $this->feedTime = now()->format('Y-m-d\TH:i');
         $this->sleepStartTime = now()->subHour()->format('Y-m-d\TH:i');
         $this->sleepEndTime = now()->format('Y-m-d\TH:i');
+        $this->reminderTime = now()->addDay()->format('Y-m-d\TH:i');
+
+        // Restore live sleep state from DB (survives page refresh)
+        $openSleep = ActivityLog::where('subject_id', $kidId)
+            ->where('subject_type', 'App\Models\Child')
+            ->where('category', 'sleep')
+            ->whereNull('data->end_time')
+            ->latest()
+            ->first();
+        if ($openSleep) {
+            $this->isSleeping = true;
+            $this->sleepStartedAt = Carbon::parse($openSleep->logged_at)->format('Y-m-d\TH:i:s');
+        }
 
         $child = \App\Models\Child::find($this->kidId);
         if ($child) {
@@ -57,20 +76,11 @@ class KidView extends Component
             $this->height = $child->height;
             $this->head = $child->head_circumference;
             $this->bloodGroup = $child->blood_group;
-            $this->umbilicalFellAt = $child->umbilical_cord_fell_off_at;
+            $this->umbilicalFellAt = $child->umbilical_cord_fell_off_at
+                ? Carbon::parse($child->umbilical_cord_fell_off_at)->format('Y-m-d\TH:i')
+                : null;
         }
         
-        // Resume active sleep session if it exists
-        $activeSleep = ActivityLog::where('subject_id', $this->kidId)
-            ->where('category', 'sleep')
-            ->whereNull('data->end_time')
-            ->latest()
-            ->first();
-
-        if ($activeSleep) {
-            $this->isSleeping = true;
-            $this->sleepStartedAt = $activeSleep->logged_at;
-        }
     }
 
     #[Computed]
@@ -86,8 +96,9 @@ class KidView extends Component
     public function logs()
     {
         return ActivityLog::where('subject_id', $this->kidId)
-            ->where('subject_type', 'App\Models\Child') 
-            ->latest('logged_at')
+            ->where('subject_type', 'App\Models\Child')
+            ->where('category', '!=', 'reminder')
+            ->orderby('logged_at', 'desc')
             ->take($this->perPage)
             ->get();
     }
@@ -103,7 +114,7 @@ class KidView extends Component
         if (!$last || !isset($last->data['next_hour'])) return null;
 
         $due = $last->logged_at->addHours((int)$last->data['next_hour']);
-        return $due->isFuture() ? $due->format('g:i a a') . ' (' . $due->diffForHumans() . ')' : 'OVERDUE: ' . $due->diffForHumans();
+        return $due->isFuture() ? $due->format('g:i a') . ' (' . $due->diffForHumans() . ')' : 'OVERDUE: ' . $due->diffForHumans();
     }
 
     #[Computed]
@@ -142,6 +153,25 @@ class KidView extends Component
     public function nextDirtyPredicted()
     {
         return $this->calculatePrediction('dirty');
+    }
+
+    #[Computed]
+    public function dailyStats()
+    {
+        $today = now()->startOfDay();
+        $logs = ActivityLog::where('subject_id', $this->kidId)
+            ->where('logged_at', '>=', $today)
+            ->get();
+
+        return [
+            'feeds' => $logs->where('category', 'feed')->count(),
+            'nappies' => $logs->where('category', 'nappy')->count(),
+            'wet' => $logs->where('category', 'nappy')->filter(fn($l) => $l->data['is_wet'] ?? false)->count(),
+            'dirty' => $logs->where('category', 'nappy')->filter(fn($l) => $l->data['is_dirty'] ?? false)->count(),
+            'sleep_sessions' => $logs->where('category', 'sleep')->count(),
+            'total_ebm' => $logs->where('category', 'feed')->sum(fn($l) => (int)($l->data['ebm'] ?? 0)),
+            'total_formula' => $logs->where('category', 'feed')->sum(fn($l) => (int)($l->data['formula'] ?? 0)),
+        ];
     }
 
     private function calculatePrediction($type)
@@ -215,13 +245,12 @@ class KidView extends Component
     #[Computed]
     public function umbilicalInfo()
     {
-        if (!$this->umbilicalFellAt) return null;
-        
+        $child = \App\Models\Child::find($this->kidId);
+        if (!$child || !$child->umbilical_cord_fell_off_at) return null;
         try {
-            $date = Carbon::parse($this->umbilicalFellAt);
-            return "Cord: " . $date->format('M d, g:i a');
+            return 'Cord off: ' . Carbon::parse($child->umbilical_cord_fell_off_at)->format('M d, g:i a');
         } catch (\Exception $e) {
-            return "Cord: " . $this->umbilicalFellAt;
+            return null;
         }
     }
 
@@ -230,48 +259,77 @@ class KidView extends Component
         $this->perPage += 10;
     }
 
+    #[Computed]
+    public function sleepSessions()
+    {
+        return ActivityLog::where('subject_id', $this->kidId)
+            ->where('subject_type', 'App\Models\Child')
+            ->where('category', 'sleep')
+            ->whereDate('logged_at', now()->toDateString())
+            ->latest('logged_at')
+            ->get()
+            ->map(function ($log) {
+                $start = Carbon::parse($log->logged_at);
+                $end = isset($log->data['end_time']) ? Carbon::parse($log->data['end_time']) : null;
+                $min = $end ? $start->diffInMinutes($end) : null;
+                return [
+                    'id'       => $log->id,
+                    'start'    => $start->format('g:i a'),
+                    'end'      => $end?->format('g:i a'),
+                    'duration' => $min !== null ? floor($min / 60).'h '.($min % 60).'m' : null,
+                    'active'   => !$end,
+                ];
+            });
+    }
+
     public function toggleSleep()
     {
         if (!$this->isSleeping) {
-            $this->logActivity('sleep', ['start_time' => now(), 'label' => 'Started Nap']);
+            $now = now();
+            $this->logActivity('sleep', [
+                'label'      => 'Sleep Started',
+                'start_time' => $now->toDateTimeString(),
+            ]);
             $this->isSleeping = true;
-            $this->sleepStartedAt = now();
+            $this->sleepStartedAt = $now->format('Y-m-d\TH:i:s');
         } else {
             $log = ActivityLog::where('subject_id', $this->kidId)
+                ->where('subject_type', 'App\Models\Child')
                 ->where('category', 'sleep')
                 ->whereNull('data->end_time')
                 ->latest()
                 ->first();
 
             if ($log) {
-                $duration = now()->diffInMinutes(Carbon::parse($this->sleepStartedAt));
+                $start = Carbon::parse($log->logged_at);
+                $end = now();
+                $min = $start->diffInMinutes($end);
                 $log->update([
                     'data' => array_merge($log->data, [
-                        'end_time' => now(),
-                        'duration_minutes' => $duration,
-                        'label' => "Slept for " . round($duration/60, 1) . "h"
-                    ])
+                        'end_time'         => $end->toDateTimeString(),
+                        'duration_minutes' => $min,
+                        'label'            => 'Slept '.floor($min / 60).'h '.($min % 60).'m',
+                    ]),
                 ]);
             }
             $this->isSleeping = false;
             $this->sleepStartedAt = null;
         }
+        if (class_exists(Haptic::class)) Haptic::impact('medium');
     }
 
     public function logSleep()
     {
         $start = Carbon::parse($this->sleepStartTime);
         $end = Carbon::parse($this->sleepEndTime);
-        $duration = $start->diffInMinutes($end);
+        $min = $start->diffInMinutes($end);
 
         $this->logActivity('sleep', [
-            'label' => "Slept for " . round($duration/60, 1) . "h",
-            'start_time' => $start,
-            'end_time' => $end,
-            'duration_minutes' => $duration,
+            'label'            => 'Slept '.floor($min / 60).'h '.($min % 60).'m',
+            'start_time'       => $start->toDateTimeString(),
+            'end_time'         => $end->toDateTimeString(),
+            'duration_minutes' => $min,
         ], $start);
-        
-        if (class_exists(Haptic::class)) Haptic::success();
     }
 
     public function saveFeeding() {
@@ -298,7 +356,7 @@ class KidView extends Component
         if (empty($labels)) return;
 
         $this->logActivity('feed', array_merge($meta, [
-            'label' => implode(' + ', $labels),
+            'label' => implode(' | ', $labels),
             'next_hour' => $this->nextFeedHours
         ]), $this->feedTime);
         $this->reset(['leftBreastScale', 'rightBreastScale', 'ebmAmount', 'formulaAmount']);
@@ -314,7 +372,7 @@ class KidView extends Component
             $this->editingLogLabel = $log->data['label'] ?? $log->category;
             $this->editingLogTime = $log->logged_at->format('Y-m-d\TH:i');
             $this->editingLogNotes = $log->data['notes'] ?? '';
-            $this->dispatch('modal-open', name: 'edit-log-modal');
+            $this->js("Flux.modal('edit-log-modal').show()");
         }
     }
 
@@ -338,6 +396,42 @@ class KidView extends Component
     public function deleteLog($id)
     {
         ActivityLog::destroy($id);
+        if (class_exists(Haptic::class)) Haptic::impact('medium');
+    }
+
+    #[Computed]
+    public function reminders()
+    {
+        return ActivityLog::where('subject_id', $this->kidId)
+            ->where('subject_type', 'App\Models\Child')
+            ->where('category', 'reminder')
+            ->get()
+            ->sortBy(fn($r) => $r->data['due_at'] ?? '9999')
+            ->values();
+    }
+
+    public function saveReminder()
+    {
+        $label = $this->reminderLabel === 'Custom'
+            ? trim($this->reminderCustomLabel)
+            : $this->reminderLabel;
+
+        if (!$label || !$this->reminderTime) return;
+
+        $this->logActivity('reminder', [
+            'label' => $label,
+            'due_at' => $this->reminderTime,
+            'notes' => $this->reminderNotes,
+        ], $this->reminderTime);
+
+        $this->reset(['reminderCustomLabel', 'reminderNotes']);
+        $this->reminderLabel = 'Medical';
+        $this->reminderTime = now()->addDay()->format('Y-m-d\TH:i');
+    }
+
+    public function deleteReminder($id)
+    {
+        ActivityLog::where('id', $id)->where('category', 'reminder')->delete();
         if (class_exists(Haptic::class)) Haptic::impact('medium');
     }
 
@@ -391,7 +485,7 @@ class KidView extends Component
 
         $meta['notes'] = $this->diaperNotes;
 
-        $this->logActivity('nappy', array_merge($meta, ['label' => implode(' + ', $labels)]));
+        $this->logActivity('nappy', array_merge($meta, ['label' => implode(' | ', $labels)]));
         $this->reset(['isWet', 'isDirty', 'diaperNotes', 'wetWeight', 'dirtyWeight']);
     }
 
@@ -399,7 +493,10 @@ class KidView extends Component
         if ($child = \App\Models\Child::find($this->kidId)) {
             $child->update([
                 'weight' => $this->weight, 'height' => $this->height, 'head_circumference' => $this->head,
-                'blood_group' => $this->bloodGroup, 'umbilical_cord_fell_off_at' => $this->umbilicalFellAt,
+                'blood_group' => $this->bloodGroup,
+                'umbilical_cord_fell_off_at' => $this->umbilicalFellAt
+                    ? Carbon::parse($this->umbilicalFellAt)->toDateTimeString()
+                    : null,
             ]);
             $this->logActivity('profile', ['label' => 'Profile Updated']);
         }
@@ -424,7 +521,26 @@ class KidView extends Component
     public function render()
     {
         return <<<'HTML'
-        <div class="space-y-6 pb-24 animate-in fade-in duration-500 p-5 bg-[#F1F5F9]">
+        <div class="space-y-6 pb-24 animate-in fade-in duration-500 p-5 bg-[#F1F5F9]"
+             x-data="{
+                 pendingModal: null,
+                 tryOpen(modal) {
+                     if ($wire.isSleeping) {
+                         this.pendingModal = modal;
+                         Flux.modal('sleep-interrupt-modal').show();
+                     } else {
+                         Flux.modal(modal).show();
+                     }
+                 },
+                 async endSleepAndContinue() {
+                     Flux.modal('sleep-interrupt-modal').hide();
+                     await $wire.toggleSleep();
+                     if (this.pendingModal) {
+                         Flux.modal(this.pendingModal).show();
+                         this.pendingModal = null;
+                     }
+                 }
+             }">
             <!-- Strategic Header -->
             <div class="flex items-center gap-4 bg-white dark:bg-zinc-900 p-4 rounded-3xl border border-slate-100 dark:border-zinc-800 shadow-sm relative overflow-hidden group">
                 <div class="absolute -right-4 -bottom-4 opacity-5 group-hover:scale-110 transition-transform">
@@ -454,6 +570,7 @@ class KidView extends Component
                 </button>
             </div>
 
+            
             <!-- Biometric HUD -->
             <div onclick="Flux.modal('kid-growth-modal').show()" class="grid grid-cols-4 gap-3 cursor-pointer active:scale-[0.98] transition-all">
                 <div class="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm text-center">
@@ -475,7 +592,46 @@ class KidView extends Component
             </div>
 
             
+        <!-- <div class="grid grid-cols-3 gap-3">
+            <div class="bg-white p-4 rounded-3xl border border-slate-100 shadow-sm">
+                <div class="flex items-center gap-1.5 mb-2">
+                    <x-lucide-milk class="w-3 h-3 text-blue-600" />
+                    <p class="text-[8px] font-black text-slate-400 uppercase tracking-widest">Feeds</p>
+                </div>
+                <div class="flex items-baseline gap-1">
+                    <p class="text-lg font-black text-slate-900">{{ $this->dailyStats['feeds'] }}</p>
+                    <p class="text-[8px] font-black text-slate-400 uppercase">{{ $this->dailyStats['total_ebm'] + $this->dailyStats['total_formula'] }}ml</p>
+                </div>
+            </div>
 
+            <div class="bg-white p-4 rounded-3xl border border-slate-100 shadow-sm">
+                <div class="flex items-center gap-1.5 mb-2">
+                    <x-lucide-droplets class="w-3 h-3 text-emerald-500" />
+                    <p class="text-[8px] font-black text-slate-400 uppercase tracking-widest">Nappies</p>
+                </div>
+                <div class="flex gap-2">
+                    <div class="flex items-baseline gap-0.5">
+                        <p class="text-lg font-black text-slate-900">{{ $this->dailyStats['wet'] }}</p>
+                        <p class="text-[7px] font-black text-blue-400 uppercase">W</p>
+                    </div>
+                    <div class="flex items-baseline gap-0.5">
+                        <p class="text-lg font-black text-slate-900">{{ $this->dailyStats['dirty'] }}</p>
+                        <p class="text-[7px] font-black text-amber-600 uppercase">D</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="bg-white p-4 rounded-3xl border border-slate-100 shadow-sm">
+                <div class="flex items-center gap-1.5 mb-2">
+                    <x-lucide-moon class="w-3 h-3 text-indigo-600" />
+                    <p class="text-[8px] font-black text-slate-400 uppercase tracking-widest">Sleep</p>
+                </div>
+                <div class="flex items-baseline gap-1">
+                    <p class="text-lg font-black text-slate-900">{{ $this->dailyStats['sleep_sessions'] }}</p>
+                    <p class="text-[8px] font-black text-slate-400 uppercase">Sessions</p>
+                </div>
+            </div>
+        </div> -->
             @if($this->nextFeedDue)
                 <div class="flex items-center gap-3 bg-white border border-blue-100 p-4 rounded-3xl shadow-sm">
                     <div class="w-8 h-8 rounded-xl bg-blue-600 flex items-center justify-center shadow-lg shadow-blue-500/20">
@@ -522,53 +678,63 @@ class KidView extends Component
                 </div>
             </div>
 
-            <div class="flex items-center gap-3 bg-white border border-indigo-100 p-4 rounded-3xl shadow-sm">
-                <div class="w-8 h-8 rounded-xl bg-indigo-600 flex items-center justify-center shadow-lg shadow-indigo-500/20">
-                    <x-lucide-moon class="w-4 h-4 text-white" />
+            <div onclick="Flux.modal('kid-sleep-modal').show()" class="flex items-center gap-3 bg-white border border-indigo-100 p-4 rounded-3xl shadow-sm cursor-pointer active:scale-[0.98] transition-all">
+                <div @class(['w-8 h-8 rounded-xl flex items-center justify-center shadow-lg', 'bg-indigo-600 shadow-indigo-500/20' => $isSleeping, 'bg-indigo-100' => !$isSleeping])>
+                    <x-lucide-moon @class(['w-4 h-4', 'text-white' => $isSleeping, 'text-indigo-400' => !$isSleeping]) />
                 </div>
                 <div class="flex-1">
                     <p class="text-[8px] font-black text-indigo-600 uppercase tracking-[0.2em] leading-none mb-1">Total Sleep Today</p>
                     <span class="text-xs font-black text-slate-900 uppercase tracking-tight">{{ $this->totalSleepToday }}</span>
                 </div>
                 @if($isSleeping)
-                    <div class="px-3 py-1 bg-indigo-50 rounded-full border border-indigo-100">
-                        <span class="text-[7px] font-black text-indigo-500 uppercase animate-pulse">In Progress</span>
+                    <div x-data="{
+                        start: new Date('{{ $sleepStartedAt }}'),
+                        t: '',
+                        init() { setInterval(() => {
+                            const s = Math.floor((new Date() - this.start) / 1000);
+                            this.t = Math.floor(s/3600)+'h '+ Math.floor((s%3600)/60)+'m';
+                        }, 1000); }
+                    }" x-init="init()" class="text-right">
+                        <p class="text-[7px] font-black text-indigo-500 uppercase animate-pulse leading-none">Live</p>
+                        <p x-text="t" class="text-xs font-black text-indigo-600 tabular-nums mt-0.5"></p>
                     </div>
                 @endif
             </div>
 
             <!-- Action Protocol Grid -->
             <div class="grid grid-cols-2 gap-3">
-                <button onclick="Flux.modal('kid-feed-modal').show()" 
+                <button @click="tryOpen('kid-feed-modal')"
                     class="col-span-2 bg-blue-600 h-16 rounded-[1rem] p-4 flex items-center justify-between shadow-xl shadow-blue-600/20 active:scale-[0.98] transition-all group">
-                    <span class="text-xl font-black text-white uppercase italic leading-none">Record Feed</span>
+                    <span class="text-md font-black text-white uppercase leading-none">Record Feed</span>
                     <div class="bg-white/20 p-2 rounded-xl"><x-lucide-milk class="w-6 h-6 text-white" /></div>
                 </button>
 
-                <button onclick="Flux.modal('kid-diaper-modal').show()" 
-                    class="bg-emerald-500 h-28 rounded-[1rem] p-4 flex flex-col justify-between shadow-lg shadow-emerald-500/20 active:scale-95 transition-all text-left">
+                <button @click="tryOpen('kid-diaper-modal')"
+                    class="bg-emerald-500 h-24 rounded-[1rem] p-4 flex flex-col justify-between shadow-lg shadow-emerald-500/20 active:scale-95 transition-all text-left">
                     <x-lucide-droplets class="w-8 h-8 text-white" />
                     <span class="font-black text-white uppercase italic tracking-tighter leading-tight">Diaper<br>Change</span>
                 </button>
 
-                <button onclick="Flux.modal('kid-sleep-modal').show()" 
+                <button wire:click="toggleSleep"
                     @class([
-                        'h-28 rounded-[1rem] p-4 flex flex-col justify-between transition-all active:scale-95 shadow-lg text-left',
+                        'h-24 rounded-[1rem] p-4 flex flex-col justify-between transition-all active:scale-95 shadow-lg text-left',
                         'bg-indigo-600 shadow-indigo-600/30 text-white' => $isSleeping,
                         'bg-white dark:bg-zinc-900 border border-slate-100 dark:border-zinc-800' => !$isSleeping
                     ])>
-                    <x-lucide-moon @class(['w-8 h-8', 'text-white' => $isSleeping, 'text-slate-400' => !$isSleeping]) />
-                    <span class="font-black uppercase italic tracking-tighter leading-tight">Sleep<br>Protocol</span>
+                    <x-lucide-moon @class(['w-8 h-8', 'text-white animate-pulse' => $isSleeping, 'text-slate-400' => !$isSleeping]) />
+                    <span @class(['font-black uppercase italic tracking-tighter leading-tight text-[11px]', 'text-white' => $isSleeping, 'text-slate-400' => !$isSleeping])>
+                        {{ $isSleeping ? 'Stop Sleep' : 'Start Sleep' }}
+                    </span>
                 </button>
 
                 <button onclick="Flux.modal('kid-vaccine-modal').show()" 
-                    class="bg-white border border-slate-100 h-28 rounded-[1rem] p-4 flex flex-col justify-between shadow-sm active:scale-95 transition-all text-left">
+                    class="bg-white border border-slate-100 h-24 rounded-[1rem] p-4 flex flex-col justify-between shadow-sm active:scale-95 transition-all text-left">
                     <x-lucide-shield-check class="w-8 h-8 text-indigo-400" />
                     <span class="font-black text-slate-400 uppercase italic tracking-tighter leading-tight">Vaccine<br>Intel</span>
                 </button>
 
                 <button onclick="Flux.modal('kid-reminder-modal').show()" 
-                    class="bg-white border border-slate-100 h-28 rounded-[1rem] p-4 flex flex-col justify-between shadow-sm active:scale-95 transition-all text-left">
+                    class="bg-white border border-slate-100 h-24 rounded-[1rem] p-4 flex flex-col justify-between shadow-sm active:scale-95 transition-all text-left">
                     <x-lucide-bell class="w-8 h-8 text-amber-400" />
                     <span class="font-black text-slate-400 uppercase italic tracking-tighter leading-tight">Next Sync<br>Alarm</span>
                 </button>
@@ -613,8 +779,37 @@ class KidView extends Component
                 </div>
             </div>
 
+            <!-- Daily Summary -->
+            <div class="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm">
+                <h3 class="text-[9px] font-black uppercase tracking-[0.2em] text-slate-400 mb-5 px-1 italic">Today's Summary</h3>
+                <div class="grid grid-cols-3 gap-3">
+                    <div class="bg-blue-50 rounded-2xl p-4 text-center">
+                        <x-lucide-milk class="w-5 h-5 text-blue-600 mx-auto mb-2" />
+                        <p class="text-xl font-black text-slate-900">{{ $this->dailyStats['feeds'] }}</p>
+                        <p class="text-[8px] font-black text-slate-400 uppercase tracking-widest">Feeds</p>
+                        @if(($this->dailyStats['total_ebm'] + $this->dailyStats['total_formula']) > 0)
+                            <p class="text-[8px] font-black text-blue-500 mt-0.5">{{ $this->dailyStats['total_ebm'] + $this->dailyStats['total_formula'] }}ml</p>
+                        @endif
+                    </div>
+                    <div class="bg-emerald-50 rounded-2xl p-4 text-center">
+                        <x-lucide-droplets class="w-5 h-5 text-emerald-600 mx-auto mb-2" />
+                        <div class="flex justify-center items-baseline gap-1.5">
+                            <span class="text-xl font-black text-blue-500">{{ $this->dailyStats['wet'] }}</span>
+                            <span class="text-xs font-black text-slate-300">/</span>
+                            <span class="text-xl font-black text-amber-600">{{ $this->dailyStats['dirty'] }}</span>
+                        </div>
+                        <p class="text-[8px] font-black text-slate-400 uppercase tracking-widest">W / D</p>
+                    </div>
+                    <div class="bg-indigo-50 rounded-2xl p-4 text-center">
+                        <x-lucide-moon class="w-5 h-5 text-indigo-600 mx-auto mb-2" />
+                        <p class="text-sm font-black text-slate-900 leading-none">{{ $this->totalSleepToday }}</p>
+                        <p class="text-[8px] font-black text-slate-400 uppercase tracking-widest mt-1">Sleep</p>
+                    </div>
+                </div>
+            </div>
+
             <!-- Modals (Profile, Feed, Diaper) -->
-            <flux:modal name="kid-profile-modal" variant="flyout" side="bottom" class="space-y-6 !rounded-t-[2.5rem] !p-8">
+            <flux:modal name="kid-profile-modal" variant="flyout" position="bottom" class="space-y-6 !rounded-t-[2.5rem] !p-8">
                 <div class="sheet-handle"></div>
                 <h2 class="text-xl font-black uppercase italic tracking-tighter">Profile</h2>
                 <div class="grid grid-cols-2 gap-3">
@@ -627,7 +822,7 @@ class KidView extends Component
                 <flux:button wire:click="saveProfile" @click="Flux.modal('kid-profile-modal').hide()" class="w-full h-14 bg-blue-600 text-white font-black uppercase italic !rounded-xl">Save Profile</flux:button>
             </flux:modal>
 
-            <flux:modal name="kid-feed-modal" variant="flyout" side="bottom" class="!max-w-lg !rounded-t-[2.5rem] space-y-6 !p-8">
+            <flux:modal name="kid-feed-modal" variant="flyout" position="bottom" class="!max-w-lg !rounded-t-[2.5rem] space-y-6 !p-8">
                 <div class="sheet-handle"></div>
                 <div class="text-center">
                     <h2 class="text-xl font-black uppercase italic tracking-tighter text-blue-600">Feeding</h2>
@@ -676,12 +871,10 @@ class KidView extends Component
                 <flux:button wire:click="saveFeeding" @click="Flux.modal('kid-feed-modal').hide()" class="w-full h-14 bg-blue-600 text-white font-black uppercase italic !rounded-xl shadow-xl shadow-blue-600/20">Execute Feed</flux:button>
             </flux:modal>
 
-            <flux:modal name="kid-diaper-modal" variant="flyout" side="bottom" class="space-y-6 !rounded-t-[2.5rem] !p-8">
+            <flux:modal name="kid-diaper-modal" variant="flyout" position="bottom" class="space-y-6 !rounded-t-[2.5rem] !p-8">
                 <div class="sheet-handle"></div>
                 <div class="text-center">
-                    <h2 class="text-xl font-black uppercase italic tracking-tighter text-emerald-600">Diaper Change</h2>
-                    
-                    
+                    <h3 class=" font-black uppercase italic tracking-tighter text-emerald-600">Diaper Change</h3>   
                 </div>
                 
                 <div class="grid grid-cols-2 gap-4">
@@ -736,7 +929,7 @@ class KidView extends Component
                 <flux:button wire:click="saveDiaper" @click="Flux.modal('kid-diaper-modal').hide()" class="w-full h-14 bg-emerald-500 text-white font-black uppercase italic !rounded-xl shadow-xl shadow-emerald-500/20">Sync Status</flux:button>
             </flux:modal>
 
-            <flux:modal name="kid-vaccine-modal" variant="flyout" side="bottom" class="space-y-6 !rounded-t-[2.5rem] !p-8">
+            <flux:modal name="kid-vaccine-modal" variant="flyout" position="bottom" class="space-y-6 !rounded-t-[2.5rem] !p-8">
                 <div class="sheet-handle"></div>
                 <h2 class="text-xl font-black uppercase italic tracking-tighter text-indigo-600">Vaccine Protocol</h2>
                 <div class="grid grid-cols-2 gap-2">
@@ -746,18 +939,64 @@ class KidView extends Component
                 </div>
             </flux:modal>
 
-            <flux:modal name="kid-reminder-modal" variant="flyout" side="bottom" class="space-y-6 !rounded-t-[2.5rem] !p-8 text-center">
+            <flux:modal name="kid-reminder-modal" variant="flyout" position="bottom" class="!rounded-t-[2.5rem] !p-8 space-y-5">
                 <div class="sheet-handle"></div>
-                <h2 class="text-xl font-black uppercase italic tracking-tighter text-amber-600">Next Sync Alarm</h2>
-                <p class="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Set a reminder for the next critical event.</p>
-                <div class="grid grid-cols-2 gap-2">
-                    <button class="py-4 bg-slate-50 rounded-xl text-[10px] font-black uppercase text-slate-500">Next Feed</button>
-                    <button class="py-4 bg-slate-50 rounded-xl text-[10px] font-black uppercase text-slate-500">Medicine</button>
+                <div>
+                    <h2 class="text-xl font-black uppercase italic tracking-tighter text-amber-600">Reminders</h2>
+                    <p class="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-1">Medical, appointments & alerts</p>
                 </div>
-                <flux:button variant="ghost" @click="Flux.modal('kid-reminder-modal').hide()">Cancel</flux:button>
+
+                @if($this->reminders->isNotEmpty())
+                    <div class="space-y-2">
+                        @foreach($this->reminders as $reminder)
+                            <div class="flex items-center gap-3 bg-amber-50 rounded-2xl p-3">
+                                <div class="w-8 h-8 rounded-xl bg-amber-100 flex items-center justify-center flex-shrink-0">
+                                    <x-lucide-bell class="w-3.5 h-3.5 text-amber-600" />
+                                </div>
+                                <div class="flex-1 min-w-0">
+                                    <p class="text-[11px] font-black uppercase italic text-slate-800 truncate">{{ $reminder->data['label'] }}</p>
+                                    <p class="text-[9px] text-amber-600 font-bold uppercase tracking-widest mt-0.5">
+                                        {{ \Carbon\Carbon::parse($reminder->data['due_at'])->format('M d · g:i A') }}
+                                    </p>
+                                    @if(!empty($reminder->data['notes']))
+                                        <p class="text-[9px] text-slate-400 italic mt-0.5 truncate">{{ $reminder->data['notes'] }}</p>
+                                    @endif
+                                </div>
+                                <button wire:click="deleteReminder({{ $reminder->id }})" class="w-8 h-8 rounded-xl bg-white flex items-center justify-center text-rose-400 active:scale-95 transition-all flex-shrink-0">
+                                    <x-lucide-trash-2 class="w-3.5 h-3.5" />
+                                </button>
+                            </div>
+                        @endforeach
+                    </div>
+                    <div class="border-t border-slate-100 -mx-8 px-8 pt-5">
+                        <p class="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-3">Add New</p>
+                    </div>
+                @endif
+
+                <div class="space-y-2">
+                    <label class="text-[9px] font-black uppercase text-slate-400 ml-1">Type</label>
+                    <div class="grid grid-cols-2 gap-2">
+                        @foreach(['Medical', 'Doctor Visit', 'Vaccine', 'Custom'] as $preset)
+                            <button wire:click="$set('reminderLabel', '{{ $preset }}')"
+                                @class(['py-3 rounded-xl text-[10px] font-black uppercase border-2 transition-all',
+                                    'bg-amber-500 border-amber-500 text-white' => $reminderLabel === $preset,
+                                    'bg-slate-50 border-transparent text-slate-500' => $reminderLabel !== $preset
+                                ])>{{ $preset }}</button>
+                        @endforeach
+                    </div>
+                </div>
+
+                @if($reminderLabel === 'Custom')
+                    <flux:input wire:model="reminderCustomLabel" label="Label" placeholder="e.g. Blood Test..." class="!bg-slate-50 !border-none" />
+                @endif
+
+                <flux:input wire:model="reminderTime" type="datetime-local" label="When" class="!bg-slate-50 !border-none" />
+                <flux:textarea wire:model="reminderNotes" label="Notes (optional)" placeholder="Any details..." rows="2" class="!bg-slate-50 !border-none" />
+
+                <flux:button wire:click="saveReminder" class="w-full h-14 bg-amber-500 text-white font-black uppercase italic !rounded-xl shadow-lg shadow-amber-500/20">Save Reminder</flux:button>
             </flux:modal>
 
-            <flux:modal name="edit-log-modal" variant="flyout" side="bottom" class="space-y-6 !rounded-t-[2.5rem] !p-8">
+            <flux:modal name="edit-log-modal" variant="flyout" position="bottom" class="space-y-6 !rounded-t-[2.5rem] !p-8">
                 <div class="sheet-handle"></div>
                 <div class="text-center">
                     <h2 class="text-xl font-black uppercase italic tracking-tighter text-blue-600">Edit Log</h2>
@@ -773,7 +1012,7 @@ class KidView extends Component
                 </div>
             </flux:modal>
 
-            <flux:modal name="kid-growth-modal" variant="flyout" side="bottom" class="space-y-6 !rounded-t-[2.5rem] !p-8">
+            <flux:modal name="kid-growth-modal" variant="flyout" position="bottom" class="space-y-6 !rounded-t-[2.5rem] !p-8">
                 <div class="sheet-handle"></div>
                 <div class="text-center">
                     <h2 class="text-xl font-black uppercase italic tracking-tighter text-blue-600">Baby Measurements</h2>
@@ -789,25 +1028,84 @@ class KidView extends Component
                 </div>
             </flux:modal>
 
-            <flux:modal name="kid-sleep-modal" variant="flyout" side="bottom" class="space-y-6 !rounded-t-[2.5rem] !p-8">
+            <flux:modal name="sleep-interrupt-modal" variant="flyout" position="bottom" class="!rounded-t-[2.5rem] !p-8 space-y-5">
                 <div class="sheet-handle"></div>
                 <div class="text-center">
-                    <h2 class="text-xl font-black uppercase italic tracking-tighter text-indigo-600">Sleep Log</h2>
-                    @if($isSleeping)
-                        <div class="mt-2 py-1 px-3 bg-indigo-50 text-indigo-600 rounded-full inline-block text-[8px] font-black uppercase tracking-widest animate-pulse">Current Sleep Active</div>
-                    @endif
+                    <div class="w-16 h-16 bg-indigo-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                        <x-lucide-moon class="w-8 h-8 text-indigo-600" />
+                    </div>
+                    <h2 class="text-xl font-black uppercase italic tracking-tighter text-indigo-600">Sleeping Now</h2>
+                    <p class="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-1">End sleep to log this activity?</p>
                 </div>
-                
-                <div class="space-y-4">
-                    <flux:input wire:model="sleepStartTime" type="datetime-local" label="Sleep Started" />
-                    <flux:input wire:model="sleepEndTime" type="datetime-local" label="Sleep Ended" />
+                <button x-on:click="endSleepAndContinue()" class="w-full h-14 bg-indigo-600 rounded-2xl text-white font-black uppercase italic text-sm active:scale-[0.98] transition-all">
+                    End Sleep & Continue
+                </button>
+                <button @click="Flux.modal('sleep-interrupt-modal').hide(); pendingModal = null;" class="w-full h-12 rounded-2xl text-slate-400 font-black uppercase text-[10px] tracking-widest">
+                    Cancel
+                </button>
+            </flux:modal>
+
+            <flux:modal name="kid-sleep-modal" variant="flyout" position="bottom" class="!rounded-t-[2.5rem] !p-8 space-y-5">
+                <div class="sheet-handle"></div>
+                <div class="flex items-center justify-between">
+                    <div>
+                        <h2 class="text-xl font-black uppercase italic tracking-tighter text-indigo-600">Sleep</h2>
+                        <p class="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-0.5">Total today: {{ $this->totalSleepToday }}</p>
+                    </div>
                 </div>
 
-                <div class="space-y-3 pt-4">
-                    <flux:button wire:click="logSleep" @click="Flux.modal('kid-sleep-modal').hide()" class="w-full h-16 bg-indigo-600 text-white font-black uppercase italic !rounded-2xl shadow-lg">Save Manual Log</flux:button>
-                    <flux:button wire:click="toggleSleep" @click="Flux.modal('kid-sleep-modal').hide()" variant="ghost" class="w-full text-indigo-600 font-black uppercase italic tracking-widest">
-                        {{ $isSleeping ? 'Stop Current Session' : 'Start Live Session' }}
-                    </flux:button>
+                {{-- Active session card --}}
+                @if($isSleeping)
+                    <div x-data="{
+                        start: new Date('{{ $sleepStartedAt }}'),
+                        t: '',
+                        init() { setInterval(() => {
+                            const s = Math.floor((new Date() - this.start) / 1000);
+                            this.t = Math.floor(s/3600)+'h '+ Math.floor((s%3600)/60)+'m '+(s%60)+'s';
+                        }, 1000); }
+                    }" x-init="init()" class="bg-indigo-600 rounded-2xl p-5 text-center space-y-2">
+                        <p class="text-[9px] font-black uppercase tracking-widest text-indigo-200">Started</p>
+                        <p class="text-sm font-black uppercase italic text-white">{{ \Carbon\Carbon::parse($sleepStartedAt)->format('g:i a') }}</p>
+                        <p x-text="t" class="text-3xl font-black tabular-nums text-white leading-none"></p>
+                        <flux:button wire:click="toggleSleep" @click="Flux.modal('kid-sleep-modal').hide()" class="w-full mt-2 !bg-white !text-indigo-600 font-black uppercase italic !rounded-xl">Stop Sleep</flux:button>
+                    </div>
+                @else
+                    <button wire:click="toggleSleep" @click="Flux.modal('kid-sleep-modal').hide()" class="w-full h-14 bg-indigo-600 rounded-2xl flex items-center justify-center gap-3 text-white font-black uppercase italic text-sm active:scale-[0.98] transition-all shadow-lg shadow-indigo-600/20">
+                        <x-lucide-moon class="w-5 h-5" />
+                        Start Sleep Now
+                    </button>
+                @endif
+
+                {{-- Today's sessions --}}
+                @if($this->sleepSessions->isNotEmpty())
+                    <div class="space-y-2">
+                        <p class="text-[9px] font-black uppercase tracking-widest text-slate-400">Today's Sessions</p>
+                        @foreach($this->sleepSessions as $session)
+                            <div class="flex items-center gap-3 bg-slate-50 rounded-2xl p-3">
+                                <div class="w-8 h-8 rounded-xl bg-indigo-100 flex items-center justify-center flex-shrink-0">
+                                    <x-lucide-moon class="w-3.5 h-3.5 text-indigo-600" />
+                                </div>
+                                <div class="flex-1">
+                                    <p class="text-[11px] font-black uppercase text-slate-800">
+                                        {{ $session['start'] }} → {{ $session['end'] ?? '...' }}
+                                    </p>
+                                    @if($session['duration'])
+                                        <p class="text-[9px] text-indigo-600 font-bold uppercase tracking-widest mt-0.5">{{ $session['duration'] }}</p>
+                                    @elseif($session['active'])
+                                        <p class="text-[9px] text-indigo-500 font-bold uppercase tracking-widest mt-0.5 animate-pulse">In progress</p>
+                                    @endif
+                                </div>
+                            </div>
+                        @endforeach
+                    </div>
+                @endif
+
+                {{-- Manual past-session log --}}
+                <div class="space-y-3 border-t border-slate-100 pt-4">
+                    <p class="text-[9px] font-black uppercase tracking-widest text-slate-400">Log Past Session</p>
+                    <flux:input wire:model="sleepStartTime" type="datetime-local" label="Started" class="!bg-slate-50 !border-none" />
+                    <flux:input wire:model="sleepEndTime" type="datetime-local" label="Ended" class="!bg-slate-50 !border-none" />
+                    <flux:button wire:click="logSleep" @click="Flux.modal('kid-sleep-modal').hide()" class="w-full h-14 bg-slate-800 text-white font-black uppercase italic !rounded-xl">Save Entry</flux:button>
                 </div>
             </flux:modal>
         </div>

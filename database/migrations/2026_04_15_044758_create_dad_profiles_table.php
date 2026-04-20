@@ -11,7 +11,7 @@ return new class extends Migration
     {
         Schema::create('dad_profiles', function (Blueprint $table) {
             $table->id();
-            $table->foreignId('user_id')->constrained()->cascadeOnDelete();
+            $table->foreignId('user_id')->constrained();
             $table->string('type'); // 'expectant' or 'existing'
             $table->boolean('track_mom')->default(false);
             $table->string('partner_name')->nullable();

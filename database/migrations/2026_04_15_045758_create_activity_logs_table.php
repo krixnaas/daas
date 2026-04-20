@@ -11,7 +11,7 @@ return new class extends Migration
     {
         Schema::create('activity_logs', function (Blueprint $table) {
             $table->id();
-            $table->foreignId('dad_profile_id')->constrained()->cascadeOnDelete();
+            $table->foreignId('dad_profile_id')->constrained();
             
             // This allows the log to belong to a Child OR a Pregnancy
             $table->nullableMorphs('subject'); 

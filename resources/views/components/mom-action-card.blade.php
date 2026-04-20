@@ -1,4 +1,4 @@
-<flux:modal name="mom-activity-modal" class="space-y-6 !rounded-[2.5rem]">
+<flux:modal name="mom-activity-modal" variant="flyout" position="bottom" class="space-y-6 !rounded-t-[2.5rem] !p-8">
     <div class="text-center"><h2 class="text-xl font-black uppercase italic">Log Activity</h2></div>
     <flux:input wire:model="activityText" label="Activity" placeholder="e.g. Walk, Shower" />
     <flux:textarea wire:model="activityNotes" label="Notes" placeholder="Optional notes..." />

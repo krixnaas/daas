@@ -154,7 +154,7 @@ class MomView extends Component
                 </div>
             </div>
 
-            <flux:modal name="mom-pump-modal" class="space-y-6">
+            <flux:modal name="mom-pump-modal" variant="flyout" position="bottom" class="space-y-6 !rounded-t-[2.5rem] !p-8">
                 <div class="text-center"><h2 class="text-xl font-black uppercase italic tracking-tighter">Pump Session</h2></div>
                 <div class="grid grid-cols-3 gap-2">
                     @foreach(['left', 'right', 'both'] as $side)
@@ -169,7 +169,7 @@ class MomView extends Component
                 <flux:button wire:click="savePump" variant="primary" class="w-full h-14 rounded-2xl bg-rose-600 border-rose-600 uppercase font-black italic">Save Session</flux:button>
             </flux:modal>
 
-            <flux:modal name="mom-med-modal" class="space-y-6">
+            <flux:modal name="mom-med-modal" variant="flyout" position="bottom" class="space-y-6 !rounded-t-[2.5rem] !p-8">
                 <div class="text-center"><h2 class="text-xl font-black uppercase italic tracking-tighter">Log Medicine</h2></div>
                 <flux:input wire:model="medName" label="Medicine Name" placeholder="e.g. Paracetamol" />
                 <flux:input wire:model="medDose" label="Dose" placeholder="e.g. 500mg" />

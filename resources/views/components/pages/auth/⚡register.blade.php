@@ -1,11 +1,15 @@
 <?php
 
 use App\Models\User;
+use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Str;
 use Illuminate\Validation\Rules;
 use Livewire\Attributes\Layout;
 use Livewire\Component;
+use Native\Mobile\Facades\Device;
 use Native\Mobile\Facades\Haptic;
 
 new #[Layout('layouts.guest')] class extends Component
@@ -25,18 +29,72 @@ new #[Layout('layouts.guest')] class extends Component
 
         $validated['password'] = Hash::make($validated['password']);
 
-        $user = User::create($validated);
-        event(new \Illuminate\Auth\Events\Registered($user));
+        // $deviceInfo = $this->getDeviceInfo(); 
+       
+        // try{
+        //     $response = Http::api()->post('/auth/register', [
+        //         'name' => $validated['name'], 
+        //         'email' => $validated['email'], 
+        //         'password' => $validated['password'], 
+        //         'device_name' => $deviceInfo['model'],
+        //     ]);
+        // }catch(ConnectionException){
+
+        //     return 'Unable to connect. Please check your connection.'; 
+        // }
+
+        // if($response ->successful() && $response->json('token')){
+        //     session(['auth_token' => $response->json('token'), 'token_verified_at' => now()]);
+
+             $user = User::create($validated);
+             event(new \Illuminate\Auth\Events\Registered($user));
+        // }
 
         Auth::login($user);
 
-        if (class_exists(Haptic::class)) {
-            Haptic::success();
+        return $this->redirect(route('selection'), true);
+    }
+    
+    public function register2()
+    {
+        $validated = $this->validate([
+            'name' => ['required', 'string', 'max:255'],
+            'email' => ['required', 'string', 'lowercase', 'email', 'max:255', 'unique:'.User::class],
+            'password' => ['required', 'confirmed', Rules\Password::defaults()],
+        ]);
+
+        $validated['password'] = Hash::make($validated['password']);
+
+        $deviceInfo = $this->getDeviceInfo(); 
+       
+        try{
+            $response = Http::api()->post('/auth/register', [
+                'name' => $validated['name'], 
+                'email' => $validated['email'], 
+                'password' => $validated['password'], 
+                'device_name' => $deviceInfo['model'],
+            ]);
+        }catch(ConnectionException){
+
+            return 'Unable to connect. Please check your connection.'; 
         }
 
-        return redirect()->route('selection');
+        if($response ->successful() && $response->json('token')){
+            session(['auth_token' => $response->json('token'), 'token_verified_at' => now()]);
+
+            // $user = User::create($validated);
+            // event(new \Illuminate\Auth\Events\Registered($user));
+        }
+
+        //Auth::login($user);
+
+        return $this->redirect(route('selection'), true);
     }
-}; ?>
+   
+}; 
+
+
+?>
 
 <div class="relative min-h-screen flex items-center justify-center p-6 bg-slate-50 dark:bg-zinc-950">
     <div class="w-full max-w-[400px] z-10">

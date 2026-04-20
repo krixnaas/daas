@@ -1,9 +1,14 @@
 <?php
 
+use App\Services\DeviceIdentity;
+use Illuminate\Http\Client\ConnectionException;
 use Livewire\Component;
 use Livewire\Attributes\Layout;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Http;
 use Native\Laravel\Facades\Window;
+use Native\Mobile\Browser;
+use Native\Mobile\Facades\Browser as FacadesBrowser;
 use Native\Mobile\Facades\Haptic;
 use Native\Mobile\Facades\Haptics;
 
@@ -27,6 +32,59 @@ new #[Layout('layouts.guest')] class extends Component {
         }
 
         $this->addError('email', trans('auth.failed'));
+    }
+
+    public function login2()
+    {
+         $credentials = $this->validate([
+            'email' => 'required|email',
+            'password' => 'required',
+        ]);
+        $deviceInfo = app(DeviceIdentity::class)->getDeviceInfo(); 
+        
+        try
+        {
+            $response = Http::api()->post('/auth/login', [
+                'email' => $credentials['email'],
+                'password' => $credentials['password'],
+                'device_name' => $deviceInfo['model']
+            ]);
+
+        }catch(ConnectionException){
+            $this->addError('email', trans('auth.failed'));
+            return;
+        }
+
+        if($response->successful() && $response->json('token')){
+            session(['auth_token' => $response->json('token'), 'token_verified_at' => now()]);
+            //event(new \Illuminate\Auth\Events\Registered($user));
+            return $this->redirect(route('selection'), navigate:true);
+        }
+    }
+
+    public function loginWithGoogle()
+    {
+        $credentials = $this->validate([
+            'email' => 'required|email',
+            'password' => 'required',
+        ]);
+
+        try{
+            $response = Http::api()->get('/auth/google/redirect')   ;
+            
+        }catch(ConnectionException){
+            $this->addError('email', trans('auth.failed'));
+            return;
+        }
+
+        $url = $response->json('url'); 
+
+        if(! $url) {
+            $this -> addError('email', trans('auth.failed'));
+            return;     
+        }
+
+        FacadesBrowser::auth($url); 
     }
 }; ?>
 

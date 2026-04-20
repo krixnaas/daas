@@ -27,6 +27,13 @@ class Child extends Model
         'labor_started_at',
     ];
 
+    protected $casts = [
+        'date_of_birth'             => 'date',
+        'due_date'                  => 'date',
+        'umbilical_cord_fell_off_at' => 'datetime',
+        'labor_started_at'          => 'datetime',
+    ];
+
     /**
      * Relationship back to the profile.
      */

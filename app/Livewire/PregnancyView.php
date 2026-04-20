@@ -21,6 +21,12 @@ class PregnancyView extends Component
     public $medName, $medDose, $medNextHours;
     public $generalNotes = '';
 
+    // Form States - Reminder
+    public $reminderLabel = 'Medical';
+    public $reminderCustomLabel = '';
+    public $reminderTime;
+    public $reminderNotes = '';
+
     public function mount($childId)
     {
         $this->childId = $childId;
@@ -28,6 +34,7 @@ class PregnancyView extends Component
         $this->babyName = $this->child->name;
         $this->birthDate = now()->format('Y-m-d\TH:i');
         $this->apptDate = now()->addDays(7)->format('Y-m-d\TH:i');
+        $this->reminderTime = now()->addDay()->format('Y-m-d\TH:i');
     }
 
     #[Computed]
@@ -73,6 +80,7 @@ class PregnancyView extends Component
     {
         return ActivityLog::where('subject_id', $this->childId)
             ->where('subject_type', 'App\Models\Child')
+            ->where('category', '!=', 'reminder')
             ->latest('logged_at')
             ->take($this->perPage)
             ->get();
@@ -156,7 +164,7 @@ class PregnancyView extends Component
             $this->editingLogLabel = $log->data['label'] ?? $log->category;
             $this->editingLogTime = $log->logged_at->format('Y-m-d\TH:i');
             $this->editingLogNotes = $log->data['notes'] ?? '';
-            $this->dispatch('modal-open', name: 'edit-log-modal');
+            $this->js("Flux.modal('edit-log-modal').show()");
         }
     }
 
@@ -180,6 +188,50 @@ class PregnancyView extends Component
     public function deleteLog($id)
     {
         ActivityLog::destroy($id);
+        if (class_exists(Haptic::class)) Haptic::impact('medium');
+    }
+
+    #[Computed]
+    public function reminders()
+    {
+        return ActivityLog::where('subject_id', $this->childId)
+            ->where('subject_type', 'App\Models\Child')
+            ->where('category', 'reminder')
+            ->get()
+            ->sortBy(fn($r) => $r->data['due_at'] ?? '9999')
+            ->values();
+    }
+
+    public function saveReminder()
+    {
+        $label = $this->reminderLabel === 'Custom'
+            ? trim($this->reminderCustomLabel)
+            : $this->reminderLabel;
+
+        if (!$label || !$this->reminderTime) return;
+
+        ActivityLog::create([
+            'dad_profile_id' => auth()->user()->dadProfile->id,
+            'subject_id' => $this->childId,
+            'subject_type' => 'App\Models\Child',
+            'category' => 'reminder',
+            'data' => [
+                'label' => $label,
+                'due_at' => $this->reminderTime,
+                'notes' => $this->reminderNotes,
+            ],
+            'logged_at' => $this->reminderTime,
+        ]);
+
+        $this->reset(['reminderCustomLabel', 'reminderNotes']);
+        $this->reminderLabel = 'Medical';
+        $this->reminderTime = now()->addDay()->format('Y-m-d\TH:i');
+        if (class_exists(Haptic::class)) Haptic::success();
+    }
+
+    public function deleteReminder($id)
+    {
+        ActivityLog::where('id', $id)->where('category', 'reminder')->delete();
         if (class_exists(Haptic::class)) Haptic::impact('medium');
     }
 
@@ -340,9 +392,9 @@ class PregnancyView extends Component
                     <x-lucide-pill class="w-6 h-6 text-white" />
                     <span class="text-[10px] font-black uppercase text-white">Log Meds</span>
                 </button>
-                <button class="bg-white border border-slate-100 h-24 rounded-3xl flex flex-col items-center justify-center gap-2 shadow-sm">
-                    <x-lucide-camera class="w-6 h-6 text-slate-400" />
-                    <span class="text-[10px] font-black uppercase text-slate-400">Bump Photo</span>
+                <button onclick="Flux.modal('preg-reminder-modal').show()" class="bg-amber-500 h-24 rounded-3xl flex flex-col items-center justify-center gap-2 shadow-lg shadow-amber-500/20">
+                    <x-lucide-bell class="w-6 h-6 text-white" />
+                    <span class="text-[10px] font-black uppercase text-white">Reminder</span>
                 </button>
                 
                 
@@ -407,7 +459,7 @@ class PregnancyView extends Component
             </div>
 
             <!-- Modals -->
-            <flux:modal name="mom-activity-modal-preg" variant="flyout" side="bottom" class="space-y-6 !rounded-t-[2.5rem] !p-8">
+            <flux:modal name="mom-activity-modal-preg" variant="flyout" position="bottom" class="space-y-6 !rounded-t-[2.5rem] !p-8">
                 <div class="sheet-handle"></div>
                 <div class="text-center">
                     <h2 class="text-xl font-black uppercase italic tracking-tighter">Event Capture</h2>
@@ -421,7 +473,7 @@ class PregnancyView extends Component
                 <flux:textarea wire:model="generalNotes" label="Notes" placeholder="Details..." class="!bg-slate-50 !border-none" />
             </flux:modal>
 
-            <flux:modal name="labor-modal" variant="flyout" side="bottom" class="space-y-6 !rounded-t-[2.5rem] !p-8">
+            <flux:modal name="labor-modal" variant="flyout" position="bottom" class="space-y-6 !rounded-t-[2.5rem] !p-8">
                 <div class="sheet-handle"></div>
                 <div class="text-center space-y-2">
                     <h2 class="text-2xl font-black uppercase italic tracking-tighter text-rose-600">Baby Arrived?</h2>
@@ -448,7 +500,7 @@ class PregnancyView extends Component
                 </div>
             </flux:modal>
 
-            <flux:modal name="appt-modal" variant="flyout" side="bottom" class="space-y-6 !rounded-t-[2.5rem] !p-8">
+            <flux:modal name="appt-modal" variant="flyout" position="bottom" class="space-y-6 !rounded-t-[2.5rem] !p-8">
                 <div class="sheet-handle"></div>
                 <div class="text-center">
                     <h2 class="text-xl font-black uppercase italic tracking-tighter text-indigo-600">Appointment</h2>
@@ -475,7 +527,7 @@ class PregnancyView extends Component
                 </div>
             </flux:modal>
 
-            <flux:modal name="med-modal-preg" variant="flyout" side="bottom" class="space-y-6 !rounded-t-[2.5rem] !p-8">
+            <flux:modal name="med-modal-preg" variant="flyout" position="bottom" class="space-y-6 !rounded-t-[2.5rem] !p-8">
                 <div class="sheet-handle"></div>
                 <div class="text-center">
                     <h2 class="text-xl font-black uppercase italic tracking-tighter text-amber-500">Medicine</h2>
@@ -491,7 +543,7 @@ class PregnancyView extends Component
                     <flux:button @click="Flux.modal('med-modal-preg').hide()" variant="ghost" class="w-full">Cancel</flux:button>
                 </div>
             </flux:modal>
-            <flux:modal name="edit-log-modal" variant="flyout" side="bottom" class="space-y-6 !rounded-t-[2.5rem] !p-8">
+            <flux:modal name="edit-log-modal" variant="flyout" position="bottom" class="space-y-6 !rounded-t-[2.5rem] !p-8">
                 <div class="sheet-handle"></div>
                 <div class="text-center">
                     <h2 class="text-xl font-black uppercase italic tracking-tighter text-indigo-600">Edit Log</h2>
@@ -505,6 +557,63 @@ class PregnancyView extends Component
                     <flux:button wire:click="updateLog" @click="Flux.modal('edit-log-modal').hide()" class="w-full h-16 bg-indigo-600 text-white font-black uppercase italic !rounded-2xl shadow-lg">Save Changes</flux:button>
                     <flux:button wire:click="deleteLog({{ $editingLogId }})" @click="Flux.modal('edit-log-modal').hide()" variant="ghost" class="w-full text-rose-500 font-black uppercase text-[10px] tracking-widest">Delete Log</flux:button>
                 </div>
+            </flux:modal>
+
+            <flux:modal name="preg-reminder-modal" variant="flyout" position="bottom" class="!rounded-t-[2.5rem] !p-8 space-y-5">
+                <div class="sheet-handle"></div>
+                <div>
+                    <h2 class="text-xl font-black uppercase italic tracking-tighter text-amber-600">Reminders</h2>
+                    <p class="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-1">Medical, appointments & alerts</p>
+                </div>
+
+                @if($this->reminders->isNotEmpty())
+                    <div class="space-y-2">
+                        @foreach($this->reminders as $reminder)
+                            <div class="flex items-center gap-3 bg-amber-50 rounded-2xl p-3">
+                                <div class="w-8 h-8 rounded-xl bg-amber-100 flex items-center justify-center flex-shrink-0">
+                                    <x-lucide-bell class="w-3.5 h-3.5 text-amber-600" />
+                                </div>
+                                <div class="flex-1 min-w-0">
+                                    <p class="text-[11px] font-black uppercase italic text-slate-800 truncate">{{ $reminder->data['label'] }}</p>
+                                    <p class="text-[9px] text-amber-600 font-bold uppercase tracking-widest mt-0.5">
+                                        {{ \Carbon\Carbon::parse($reminder->data['due_at'])->format('M d · g:i A') }}
+                                    </p>
+                                    @if(!empty($reminder->data['notes']))
+                                        <p class="text-[9px] text-slate-400 italic mt-0.5 truncate">{{ $reminder->data['notes'] }}</p>
+                                    @endif
+                                </div>
+                                <button wire:click="deleteReminder({{ $reminder->id }})" class="w-8 h-8 rounded-xl bg-white flex items-center justify-center text-rose-400 active:scale-95 transition-all flex-shrink-0">
+                                    <x-lucide-trash-2 class="w-3.5 h-3.5" />
+                                </button>
+                            </div>
+                        @endforeach
+                    </div>
+                    <div class="border-t border-slate-100 -mx-8 px-8 pt-5">
+                        <p class="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-3">Add New</p>
+                    </div>
+                @endif
+
+                <div class="space-y-2">
+                    <label class="text-[9px] font-black uppercase text-slate-400 ml-1">Type</label>
+                    <div class="grid grid-cols-2 gap-2">
+                        @foreach(['Medical', 'Doctor Visit', 'Midwife', 'Custom'] as $preset)
+                            <button wire:click="$set('reminderLabel', '{{ $preset }}')"
+                                @class(['py-3 rounded-xl text-[10px] font-black uppercase border-2 transition-all',
+                                    'bg-amber-500 border-amber-500 text-white' => $reminderLabel === $preset,
+                                    'bg-slate-50 border-transparent text-slate-500' => $reminderLabel !== $preset
+                                ])>{{ $preset }}</button>
+                        @endforeach
+                    </div>
+                </div>
+
+                @if($reminderLabel === 'Custom')
+                    <flux:input wire:model="reminderCustomLabel" label="Label" placeholder="e.g. Blood Test..." class="!bg-slate-50 !border-none" />
+                @endif
+
+                <flux:input wire:model="reminderTime" type="datetime-local" label="When" class="!bg-slate-50 !border-none" />
+                <flux:textarea wire:model="reminderNotes" label="Notes (optional)" placeholder="Any details..." rows="2" class="!bg-slate-50 !border-none" />
+
+                <flux:button wire:click="saveReminder" class="w-full h-14 bg-amber-500 text-white font-black uppercase italic !rounded-xl shadow-lg shadow-amber-500/20">Save Reminder</flux:button>
             </flux:modal>
         </div>
         HTML;

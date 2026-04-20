@@ -31,11 +31,12 @@
         @apply w-12 h-1.5 bg-slate-200 dark:bg-zinc-800 rounded-full mx-auto mb-4;
     }
 
-    /* Force height of content for bottom sheets */
-    [data-flux-modal][data-variant="flyout"][data-side="bottom"] {
+    /* Bottom sheet dialogs — slide up from bottom, height = content */
+    [data-flux-modal] > dialog[data-flux-flyout].mt-auto {
         height: auto !important;
+        max-height: 90dvh;
+        overflow-y: auto;
         @apply !border-none shadow-2xl;
-        transition: transform 0.3s ease-out;
     }
 
     [data-flux-modal-backdrop] {

@@ -55,11 +55,21 @@ new #[Layout('layouts.app')] class extends Component {
     <nav class="bg-white dark:bg-zinc-900 px-3 py-2 flex items-center justify-between border-b border-slate-100 dark:border-zinc-800 sticky top-0 z-20">
         <div>
             <h1 class="text-2xl font-black italic tracking-tighter text-slate-900 dark:text-white uppercase">DAAS</h1>
-            <p class="text-[10px] font-black uppercase tracking-[0.2em] text-indigo-600">Command Center</p>
+            <p class="text-[10px] font-black uppercase tracking-[0.2em] text-indigo-600">Dad as a service</p>
         </div>
-        <button onclick="Flux.modal('tactical-settings').show()" class="w-10 h-10 rounded-xl bg-slate-50 dark:bg-zinc-800 flex items-center justify-center text-slate-500">
-            <x-lucide-layout-grid class="w-5 h-5" />
-        </button>
+        <div class="flex items-center gap-2">
+            <button onclick="Flux.modal('camera-panel').show()"
+                class="relative w-10 h-10 rounded-xl bg-slate-50 dark:bg-zinc-800 flex items-center justify-center text-slate-500 active:scale-95 transition-all">
+                <x-lucide-camera class="w-5 h-5" />
+            </button>
+            <button onclick="Flux.modal('timer-panel').show()"
+                class="relative w-10 h-10 rounded-xl bg-slate-50 dark:bg-zinc-800 flex items-center justify-center text-slate-500 active:scale-95 transition-all">
+                <x-lucide-timer class="w-5 h-5" />
+            </button>
+            <button onclick="Flux.modal('tactical-settings').show()" class="w-10 h-10 rounded-xl bg-slate-50 dark:bg-zinc-800 flex items-center justify-center text-slate-500">
+                <x-lucide-layout-grid class="w-5 h-5" />
+            </button>
+        </div>
     </nav>
 
     @php $safeTabs = $this->getSafeTabs(); @endphp
@@ -101,8 +111,11 @@ new #[Layout('layouts.app')] class extends Component {
         </div>
     </main>
 
+    <livewire:timer-view />
+    <livewire:photo-capture />
+
     <!-- Tactical Settings Modal -->
-    <flux:modal name="tactical-settings" variant="flyout" side="bottom" class="!rounded-t-[2.5rem] !p-8 space-y-6">
+    <flux:modal name="tactical-settings" variant="flyout" position="bottom" class="!rounded-t-[2.5rem] !p-8 space-y-6">
         <div class="sheet-handle"></div>
         <div class="text-center">
             <h2 class="text-xl font-black uppercase italic tracking-tighter text-indigo-600">HQ Settings</h2>

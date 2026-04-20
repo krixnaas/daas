@@ -1,5 +1,6 @@
 <?php
 
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/', function () {
@@ -46,3 +47,11 @@ Route::middleware(['auth', 'verified'])->group(function () {
     //     return redirect()->route('dashboard');
     // });
 });
+
+Route::get('/auth/callback', function(Request $request){
+    if($request->filled('token')){
+        session(['auth_token'=> $request->get('token'), 'token_verified_at' => now()]);
+        return redirect()->route('dashboard');
+    }
+    return redirect()->route('login');
+})->name('auth.callback');
