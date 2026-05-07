@@ -55,6 +55,42 @@ new #[Layout('layouts.guest')] class extends Component
         return $this->redirect(route('selection'), true);
     }
     
+    public function register3()
+    {
+        $validated = $this->validate([
+            'name' => ['required', 'string', 'max:255'],
+            'email' => ['required', 'string', 'lowercase', 'email', 'max:255', 'unique:'.User::class],
+            'password' => ['required', 'confirmed', Rules\Password::defaults()],
+        ]);
+
+        $validated['password'] = Hash::make($validated['password']);
+
+        // $deviceInfo = $this->getDeviceInfo(); 
+       
+        // try{
+        //     $response = Http::api()->post('/auth/register', [
+        //         'name' => $validated['name'], 
+        //         'email' => $validated['email'], 
+        //         'password' => $validated['password'], 
+        //         'device_name' => $deviceInfo['model'],
+        //     ]);
+        // }catch(ConnectionException){
+
+        //     return 'Unable to connect. Please check your connection.'; 
+        // }
+
+        // if($response ->successful() && $response->json('token')){
+        //     session(['auth_token' => $response->json('token'), 'token_verified_at' => now()]);
+
+             $user = User::create($validated);
+             event(new \Illuminate\Auth\Events\Registered($user));
+        // }
+
+        Auth::login($user);
+
+        return $this->redirect(route('selection'), true);
+    }
+    
     public function register2()
     {
         $validated = $this->validate([
